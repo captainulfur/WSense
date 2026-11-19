@@ -1,0 +1,6 @@
+phase1_rssi/build/
+data/
+config/room.json
+__pycache__/
+.claude/
+.DS_Store

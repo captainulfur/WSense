@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WallSense 3D</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16191d; --muted: #66707a; --line: #e3e6ea;
+    --scene: #e9edf2; --floor: #d5dbe2; --grid: #8a96a3; --wall: #9aa6b4;
+    --router: #2563eb; --mac: #7c3aed; --esp32: #0d9488; --link: #64748b; --hot: #dc2626;
+    --person: #ea580c; --accent: #2563eb; --ok: #16a34a; --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --text: #e8ebef; --muted: #8b95a1; --line: #262c34;
+      --scene: #0d1014; --floor: #1b2128; --grid: #3d4752; --wall: #56616e;
+      --router: #60a5fa; --mac: #a78bfa; --esp32: #2dd4bf; --link: #7b8794; --hot: #f87171;
+      --person: #fb923c; --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .app { display: grid; grid-template-columns: 1fr 360px; height: 100vh; }
+  #view { position: relative; overflow: hidden; background: var(--scene); }
+  #view canvas { display: block; }
+  .labels { position: absolute; inset: 0; pointer-events: none; }
+  .nlabel { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: var(--panel);
+            border: 1px solid var(--line); color: var(--text); white-space: nowrap; transform: translateY(-16px); }
+  .hud { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; gap: 10px; flex-wrap: wrap; pointer-events: none; }
+  .pill { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; pointer-events: auto; }
+  .pill b { font-size: 16px; }
+  #modeBadge.sim { border-color: var(--warn); color: var(--warn); }
+  #stateText.hot { color: var(--hot); }
+  #pickHint { display: none; border-color: var(--accent); color: var(--accent); }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 20px 0 8px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  a { color: var(--accent); }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-top: 12px; }
+  .seg button { flex: 1; border: 0; border-radius: 0; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  button { font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input, select { font: inherit; width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .row3 label, .item label { font-size: 11px; color: var(--muted); display: block; }
+  .item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+  .item .top { display: grid; grid-template-columns: 1fr 92px auto auto; gap: 6px; align-items: end; margin-bottom: 6px; }
+  .item .walls { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 6px; align-items: end; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  #saveMsg { font-size: 12px; color: var(--ok); }
+  .titlebar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .langtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .langtoggle button { border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+  .langtoggle button.on { background: var(--accent); color: #fff; }
+  @media (max-width: 820px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 60vh auto; height: auto; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div class="app">
+  <div id="view">
+    <div class="hud">
+      <div class="pill" id="modeBadge"></div>
+      <div class="pill"><span data-i18n="hud.state"></span> <b id="stateText"></b></div>
+      <div class="pill" id="detailText">–</div>
+      <div class="pill" id="pickHint"></div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="titlebar"><h1>WallSense 3D</h1><div id="lang"></div></div>
+    <div class="sub"><span data-i18n="p3.help"></span> <a href="/" data-i18n="p3.back2d"></a></div>
+
+    <div class="seg">
+      <button id="modeLive" class="on" data-i18n="mode.live"></button>
+      <button id="modeSim" data-i18n="mode.sim"></button>
+    </div>
+    <p class="note" id="modeNote"></p>
+
+    <h2 data-i18n="sec.area"></h2>
+    <div class="row3">
+      <div><label data-i18n="area.w"></label><input type="number" step="0.1" min="1" max="50" id="aw"></div>
+      <div><label data-i18n="area.d"></label><input type="number" step="0.1" min="1" max="50" id="ad"></div>
+      <div><label data-i18n="area.h"></label><input type="number" step="0.1" min="1.5" max="10" id="ah"></div>
+    </div>
+
+    <h2 data-i18n="sec.nodes"></h2>
+    <div id="nodes"></div>
+    <div class="btns"><button id="addNode" data-i18n="btn.addNode"></button></div>
+
+    <h2 data-i18n="sec.walls"></h2>
+    <div id="walls"></div>
+    <div class="btns"><button id="addWall" data-i18n="btn.addWall"></button></div>
+
+    <h2 data-i18n="sec.links"></h2>
+    <div class="sub" id="linksText"></div>
+    <div class="btns"><button id="autoLinks" data-i18n="btn.autoLinks"></button></div>
+    <p class="note" data-i18n="note.links"></p>
+
+    <h2 data-i18n="sec.figure"></h2>
+    <label class="sub" for="crossing"><span data-i18n="figure.q"></span> Router ← <b id="crossingVal"></b> → Mac</label>
+    <input type="range" id="crossing" min="0" max="1" step="0.05" style="padding:0">
+    <p class="note" data-i18n="note.figure"></p>
+
+    <div class="btns" style="margin-top:20px">
+      <button class="primary" id="save" data-i18n="btn.save"></button>
+      <button id="reset" data-i18n="btn.reset"></button>
+      <span id="saveMsg"></span>
+    </div>
+  </aside>
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+import { RTI, linkKey } from "/viz3d/rti.js";
+import { t, applyI18n, mountLangToggle, onLangChange } from "/viz3d/i18n.js";
+
+const $ = id => document.getElementById(id);
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+// ------------------------------------------------------------ durum
+let saved = null;      // sunucudaki kayıtlı oda
+let config = null;     // düzenlenen oda
+let mode = "live";
+let active = null;     // sahnede gösterilen (canlı: config, simülasyon: sanal kurulum)
+let rti = null, disp = null;
+let pickNodeId = null;
+const live = new Map(); // linkId -> {v, at, score, threshold, motion, state}
+const LIVE_LINK = "router-mac";  // Mac'in ölçtüğü tek hat
+const human = { prev: null, vx: 0, vy: 0, previewUntil: 0 };
+
+// ------------------------------------------------------------ three.js
+const view = $("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+view.prepend(renderer.domElement);
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.className = "labels";
+view.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.49;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+sun.position.set(6, 12, 5);
+scene.add(sun);
+
+let world = new THREE.Group();
+scene.add(world);
+let A = { w: 8, d: 5, h: 2.7 };
+let floorMesh, heatTex, heatData, linkObjs = [], estMesh, ghostMesh;
+
+// oda koordinatı (x, y, yükseklik z) -> three.js dünyası (y yukarı)
+const toW = (x, y, z = 0) => new THREE.Vector3(x - A.w / 2, z, y - A.d / 2);
+
+function disposeGroup(g) {
+  g.traverse(o => {
+    o.geometry?.dispose?.();
+    if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose?.(); m.dispose(); });
+    if (o.isCSS2DObject) o.element.remove();
+  });
+}
+
+function buildScene(cfg) {
+  scene.remove(world);
+  disposeGroup(world);
+  world = new THREE.Group();
+  scene.add(world);
+  scene.background = new THREE.Color(cssVar("--scene"));
+  A = cfg.area;
+
+  // zemin
+  floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(A.w, A.d),
+    new THREE.MeshStandardMaterial({ color: cssVar("--floor"), roughness: 1 }));
+  floorMesh.rotation.x = -Math.PI / 2;
+  world.add(floorMesh);
+
+  // 1 metrelik ızgara + alan sınırı
+  const pts = [];
+  for (let x = 0; x <= A.w + 1e-6; x += 1) pts.push(toW(x, 0, 0.003), toW(x, A.d, 0.003));
+  for (let y = 0; y <= A.d + 1e-6; y += 1) pts.push(toW(0, y, 0.003), toW(A.w, y, 0.003));
+  world.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: cssVar("--grid"), transparent: true, opacity: 0.5 })));
+  const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(A.w, A.h, A.d)),
+    new THREE.LineBasicMaterial({ color: cssVar("--grid"), transparent: true, opacity: 0.35 }));
+  box.position.y = A.h / 2;
+  world.add(box);
+
+  // duvarlar
+  const wallMat = new THREE.MeshStandardMaterial({ color: cssVar("--wall"), transparent: true, opacity: 0.35, depthWrite: false });
+  for (const w of cfg.walls) {
+    const p1 = toW(w.x1, w.y1), p2 = toW(w.x2, w.y2);
+    const len = p1.distanceTo(p2);
+    if (len < 0.05) continue;
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(len, A.h, 0.1), wallMat);
+    wall.position.set((p1.x + p2.x) / 2, A.h / 2, (p1.z + p2.z) / 2);
+    wall.rotation.y = -Math.atan2(p2.z - p1.z, p2.x - p1.x);
+    world.add(wall);
+  }
+
+  // tomografi + zemin ısı haritası
+  rti = new RTI(A, cfg.nodes, cfg.links);
+  disp = new Float32Array(rti.nx * rti.ny);
+  heatData = new Uint8Array(rti.nx * rti.ny * 4);
+  heatTex = new THREE.DataTexture(heatData, rti.nx, rti.ny, THREE.RGBAFormat);
+  heatTex.magFilter = THREE.LinearFilter;
+  heatTex.minFilter = THREE.LinearFilter;
+  heatTex.needsUpdate = true;
+  const gw = rti.nx * rti.cell, gd = rti.ny * rti.cell;
+  const heat = new THREE.Mesh(new THREE.PlaneGeometry(gw, gd),
+    new THREE.MeshBasicMaterial({ map: heatTex, transparent: true, depthWrite: false }));
+  heat.rotation.x = -Math.PI / 2;
+  heat.position.set(gw / 2 - A.w / 2, 0.02, gd / 2 - A.d / 2);
+  world.add(heat);
+
+  // cihazlar
+  for (const n of cfg.nodes) {
+    const color = cssVar(`--${n.type}`) || cssVar("--esp32");
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 16),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35 }));
+    ball.position.copy(toW(n.x, n.y, n.z));
+    world.add(ball);
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, n.z, 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5 }));
+    stick.position.copy(toW(n.x, n.y, n.z / 2));
+    world.add(stick);
+    const el = document.createElement("div");
+    el.className = "nlabel";
+    el.textContent = n.name;
+    el.style.borderColor = color;
+    const lbl = new CSS2DObject(el);
+    lbl.position.copy(toW(n.x, n.y, n.z + 0.2));
+    world.add(lbl);
+  }
+
+  // sinyal hatları
+  linkObjs = rti.links.map(L => {
+    const curve = new THREE.LineCurve3(toW(L.a.x, L.a.y, L.a.z), toW(L.b.x, L.b.y, L.b.z));
+    const mat = new THREE.MeshBasicMaterial({ color: cssVar("--link"), transparent: true, opacity: 0.4 });
+    const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 1, 0.025, 8, false), mat);
+    world.add(mesh);
+    return { L, mat };
+  });
+
+  // algılanan kişi (turuncu insan figürü) ve simülasyondaki gerçek kişi (yeşil tel kafes)
+  estMesh = makeHuman(cssVar("--person"));
+  world.add(estMesh);
+  ghostMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 1.2, 6, 16),
+    new THREE.MeshBasicMaterial({ color: cssVar("--ok"), wireframe: true }));
+  ghostMesh.visible = false;
+  world.add(ghostMesh);
+
+  renderLinksText();
+}
+
+function renderLinksText() {
+  $("linksText").textContent = rti.links.length
+    ? t(rti.links.length === 1 ? "links.one" : "links.count", { n: rti.links.length, list: rti.links.map(L => `${L.a.name}–${L.b.name}`).join(", ") })
+    : t("links.none");
+}
+
+// Basit insan figürü: baş, gövde, kollar ve bacaklar. Ayakları grubun orijininde.
+// Kollar ve bacaklar omuz/kalçadan döner, böylece yürüme animasyonu yapılabilir.
+function makeHuman(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35, transparent: true, opacity: 0 });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 20, 14), mat);
+  head.position.y = 1.62;
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.42, 6, 12), mat);
+  torso.position.y = 1.14;
+  torso.scale.z = 0.7;
+  g.add(head, torso);
+  const limb = (len, r, x, y) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, y, 0);
+    const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 8), mat);
+    m.position.y = -(len / 2 + r);
+    pivot.add(m);
+    g.add(pivot);
+    return pivot;
+  };
+  g.userData = {
+    mat, phase: 0, opacity: 0, placed: false,
+    armL: limb(0.5, 0.05, -0.23, 1.44), armR: limb(0.5, 0.05, 0.23, 1.44),
+    legL: limb(0.7, 0.07, -0.1, 0.85), legR: limb(0.7, 0.07, 0.1, 0.85),
+  };
+  g.visible = false;
+  return g;
+}
+
+// Figürü göster/gizle, yerine taşı, yönünü çevir ve yürüyorsa kollarını-bacaklarını salla.
+function updateHuman(dt, show, pos, walking, angle) {
+  const u = estMesh.userData;
+  if (pos) {
+    const w = toW(pos.x, pos.y, 0);
+    if (!u.placed) { estMesh.position.copy(w); u.placed = true; }
+    else estMesh.position.lerp(w, Math.min(1, dt * 5));
+  }
+  if (angle != null) {
+    const d = Math.atan2(Math.sin(angle - estMesh.rotation.y), Math.cos(angle - estMesh.rotation.y));
+    estMesh.rotation.y += d * Math.min(1, dt * 6);
+  }
+  u.opacity += ((show ? 0.92 : 0) - u.opacity) * Math.min(1, dt * 5);
+  u.mat.opacity = u.opacity;
+  estMesh.visible = u.opacity > 0.03;
+  if (!estMesh.visible) u.placed = false;
+  const swing = walking ? Math.sin(u.phase += dt * 7) : 0;
+  const k = Math.min(1, dt * 8);
+  for (const [p, s] of [[u.legL, 0.5], [u.legR, -0.5], [u.armL, -0.4], [u.armR, 0.4]]) {
+    p.rotation.x += (swing * s - p.rotation.x) * k;
+  }
+}
+
+function frameCamera() {
+  const s = Math.max(A.w, A.d);
+  camera.position.set(-s * 0.15, s * 0.85, s * 1.0);
+  controls.target.set(0, 0.5, 0);
+  controls.update();
+}
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view);
+
+// ------------------------------------------------------------ simülasyon
+// Sanal ESP32'ler ve sanal bir kişi. Her hat, kişi hatta ne kadar yakınsa o kadar bozulur.
+const sim = { p: { x: 2, y: 2 }, target: { x: 4, y: 3 }, pause: 0, acc: 0, values: new Map() };
+
+function makeSimConfig(cfg) {
+  const esp = cfg.nodes.filter(n => n.type === "esp32");
+  let nodes;
+  if (esp.length >= 3) nodes = esp;
+  else {
+    const { w, d } = cfg.area, m = 0.25;
+    nodes = [[m, m], [w / 2, m], [w - m, m], [w - m, d - m], [w / 2, d - m], [m, d - m]]
+      .map(([x, y], i) => ({ id: `s${i + 1}`, name: t("sim.node", { i: i + 1 }), type: "esp32", x, y, z: 1.0 }));
+  }
+  const links = [];
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) links.push([nodes[i].id, nodes[j].id]);
+  return { area: cfg.area, walls: cfg.walls, nodes, links };
+}
+
+function randTarget() {
+  return { x: 0.5 + Math.random() * (A.w - 1), y: 0.5 + Math.random() * (A.d - 1) };
+}
+
+function gauss() { return Math.sqrt(-2 * Math.log(Math.random() + 1e-9)) * Math.cos(2 * Math.PI * Math.random()); }
+
+function simStep(dt) {
+  if (sim.pause > 0) sim.pause -= dt;
+  else {
+    const dx = sim.target.x - sim.p.x, dy = sim.target.y - sim.p.y, dist = Math.hypot(dx, dy);
+    const step = 0.9 * dt;
+    if (dist <= step) {
+      sim.p = { ...sim.target };
+      sim.target = randTarget();
+      if (Math.random() < 0.3) sim.pause = 1 + Math.random() * 2;
+    } else {
+      sim.p.x += dx / dist * step;
+      sim.p.y += dy / dist * step;
+    }
+  }
+  sim.acc += dt;
+  if (sim.acc < 0.1) return;   // gerçek sistem gibi saniyede 10 ölçüm
+  sim.acc = 0;
+  for (const L of rti.links) {
+    const e = Math.hypot(sim.p.x - L.a.x, sim.p.y - L.a.y) + Math.hypot(sim.p.x - L.b.x, sim.p.y - L.b.y)
+            - Math.hypot(L.a.x - L.b.x, L.a.y - L.b.y);
+    sim.values.set(L.id, 2.2 * Math.exp(-e / 0.25) + Math.abs(gauss()) * 0.15);
+  }
+}
+
+// ------------------------------------------------------------ canlı veri
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (!m.link || m.disconnected || !m.warm) return;
+    live.set(m.link, { v: clamp(m.score / m.threshold, 0, 2.5), at: performance.now(),
+                       score: m.score, threshold: m.threshold, motion: m.motion, state: m.state });
+  };
+}
+
+function liveValues() {
+  const now = performance.now(), out = new Map();
+  for (const [k, s] of live) if (now - s.at < 3000) out.set(k, s.v);
+  return out;
+}
+
+// ------------------------------------------------------------ her kare
+const hotRGB = () => new THREE.Color(cssVar("--hot"));
+let last = performance.now();
+
+function paintHeat() {
+  const hot = hotRGB(), warm = new THREE.Color("#f5b301");
+  const tmp = new THREE.Color();
+  for (let j = 0; j < rti.ny; j++) {
+    const row = rti.ny - 1 - j;   // doku satırları ters sırada
+    for (let i = 0; i < rti.nx; i++) {
+      const t = clamp((disp[j * rti.nx + i] - 0.5) / 1.0, 0, 1);
+      tmp.copy(warm).lerp(hot, t);
+      const o = (row * rti.nx + i) * 4;
+      heatData[o] = tmp.r * 255; heatData[o + 1] = tmp.g * 255; heatData[o + 2] = tmp.b * 255;
+      heatData[o + 3] = t * 220;
+    }
+  }
+  heatTex.needsUpdate = true;
+}
+
+function tick(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+
+  if (mode === "sim") simStep(dt);
+  const values = mode === "sim" ? sim.values : liveValues();
+  const img = rti.reconstruct(values);
+  const k = Math.min(1, dt * 6);
+  for (let i = 0; i < disp.length; i++) disp[i] += (img[i] - disp[i]) * k;
+  paintHeat();
+
+  const linkColor = new THREE.Color(cssVar("--link")), hot = hotRGB();
+  for (const { L, mat } of linkObjs) {
+    const v = values.get(L.id) ?? values.get(L.rid);
+    if (v == null) { mat.color.copy(linkColor); mat.opacity = 0.15; continue; }
+    const t = clamp((v - 0.5) / 1.0, 0, 1);
+    mat.color.copy(linkColor).lerp(hot, t);
+    mat.opacity = 0.35 + 0.6 * t;
+  }
+
+  // durum + insan figürü
+  const enough = rti.usedLinks >= 3;
+  const est = enough ? rti.estimate(disp, 0.9) : null;
+  const liveLink = rti.links.find(L => L.id === LIVE_LINK || L.rid === LIVE_LINK);
+  const ls = live.get(LIVE_LINK);
+  const lsFresh = ls && performance.now() - ls.at < 3000;
+  let single = null;   // tek hat modunda gösterilen kişi bilgisi
+  if (est) {
+    // Çok hat: tahmini konumda, hızına göre yürüyen ya da duran figür
+    const h = human;
+    if (h.prev) {
+      const vx = (est.x - h.prev.x) / Math.max(dt, 1e-3), vy = (est.y - h.prev.y) / Math.max(dt, 1e-3);
+      h.vx += (vx - h.vx) * Math.min(1, dt * 3);
+      h.vy += (vy - h.vy) * Math.min(1, dt * 3);
+    }
+    h.prev = { x: est.x, y: est.y };
+    const speed = Math.hypot(h.vx, h.vy);
+    const walking = speed > 0.25;
+    updateHuman(dt, true, est, walking, walking ? Math.atan2(h.vx, h.vy) : null);
+  } else if (liveLink && (performance.now() < human.previewUntil || (mode === "live" && lsFresh && ls.motion))) {
+    // Tek hat: figür hattın üzerinde, kullanıcının seçtiği noktada (temsili konum)
+    human.prev = null;
+    const t = active.crossing ?? 0.5;
+    const pos = { x: liveLink.a.x + (liveLink.b.x - liveLink.a.x) * t, y: liveLink.a.y + (liveLink.b.y - liveLink.a.y) * t };
+    const walking = lsFresh && ls.motion && ls.state === "walking";
+    // hatta dik yönde dursun (hattı geçiyormuş gibi)
+    const angle = Math.atan2(-(liveLink.b.y - liveLink.a.y), liveLink.b.x - liveLink.a.x);
+    updateHuman(dt, true, pos, walking, angle);
+    single = lsFresh && ls.motion ? (walking ? "walking" : "standing") : "preview";
+  } else {
+    human.prev = null;
+    updateHuman(dt, false, null, false, null);
+  }
+  ghostMesh.visible = mode === "sim";
+  if (mode === "sim") ghostMesh.position.copy(toW(sim.p.x, sim.p.y, 0.85));
+
+  const st = $("stateText");
+  let anyHot = false;
+  for (const v of values.values()) if (v >= 1) anyHot = true;
+  // canlı hatta sunucunun alarmı (1.5 sn tutma süresi dahil) figürle aynı kararı versin
+  if (mode === "live" && lsFresh && ls.motion) anyHot = true;
+  st.textContent = t(anyHot ? "st.motion" : (values.size ? "st.calm" : "st.nodata"));
+  st.className = anyHot ? "hot" : "";
+
+  let detail;
+  if (mode === "sim") {
+    detail = est ? t("detail.simErr", { v: Math.hypot(est.x - sim.p.x, est.y - sim.p.y).toFixed(2) })
+                 : t("detail.noPerson");
+  } else if (!values.size) {
+    detail = t("detail.waitLive");
+  } else if (!enough) {
+    const s = [...live.values()][0];
+    detail = single === "walking" || single === "standing"
+      ? t(`detail.${single}`)
+      : t("detail.single", { s: s.score.toFixed(2), t: s.threshold.toFixed(1) });
+  } else {
+    detail = est ? t("detail.pos", { x: est.x.toFixed(1), y: est.y.toFixed(1) }) : t("detail.noPerson");
+  }
+  $("detailText").textContent = detail;
+
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+// ------------------------------------------------------------ mod
+function applyMode(reframe = false) {
+  active = mode === "sim" ? makeSimConfig(config) : config;
+  buildScene(active);
+  if (reframe) frameCamera();
+  $("modeLive").classList.toggle("on", mode === "live");
+  $("modeSim").classList.toggle("on", mode === "sim");
+  renderModeTexts();
+  if (mode === "sim") { sim.p = randTarget(); sim.target = randTarget(); sim.values.clear(); }
+}
+
+function renderModeTexts() {
+  const badge = $("modeBadge");
+  badge.textContent = t(mode === "sim" ? "badge.sim" : "badge.live");
+  badge.className = "pill" + (mode === "sim" ? " sim" : "");
+  $("modeNote").textContent = t(mode === "sim" ? "note.sim" : "note.live");
+}
+$("modeLive").onclick = () => { mode = "live"; applyMode(); };
+$("modeSim").onclick = () => { mode = "sim"; applyMode(); };
+
+// ------------------------------------------------------------ form
+function num(v, fallback) { const n = parseFloat(v); return Number.isFinite(n) ? n : fallback; }
+
+function field(label, value, onChange, attrs = {}) {
+  const wrap = document.createElement("div");
+  const l = document.createElement("label"); l.textContent = label;
+  const i = document.createElement("input");
+  i.type = attrs.type || "number"; i.step = attrs.step || "0.1"; i.value = value;
+  i.onchange = () => onChange(i.value);
+  wrap.append(l, i);
+  return wrap;
+}
+
+function changed() { setSaveMsg(null); applyMode(); renderForm(); }
+
+function renderForm() {
+  $("aw").value = config.area.w; $("ad").value = config.area.d; $("ah").value = config.area.h;
+  config.crossing ??= 0.5;
+  $("crossing").value = config.crossing;
+  $("crossingVal").textContent = t("pct", { v: Math.round(config.crossing * 100) });
+
+  const nodesEl = $("nodes"); nodesEl.replaceChildren();
+  for (const n of config.nodes) {
+    const box = document.createElement("div"); box.className = "item";
+    const top = document.createElement("div"); top.className = "top";
+    top.append(field(t("f.name"), n.name, v => { n.name = v.slice(0, 24) || n.id; changed(); }, { type: "text" }));
+    const typeWrap = document.createElement("div");
+    const tl = document.createElement("label"); tl.textContent = t("f.type");
+    const sel = document.createElement("select");
+    for (const [val, txt] of [["router", "Router"], ["mac", "Mac"], ["esp32", "ESP32"]]) {
+      const o = document.createElement("option"); o.value = val; o.textContent = txt; sel.append(o);
+    }
+    sel.value = n.type;
+    sel.disabled = n.id === "router" || n.id === "mac";
+    sel.onchange = () => { n.type = sel.value; changed(); };
+    typeWrap.append(tl, sel);
+    const pick = document.createElement("button"); pick.textContent = "📍"; pick.title = t("f.pick");
+    pick.onclick = () => startPick(n.id);
+    const del = document.createElement("button"); del.textContent = "✕"; del.title = t("f.delete");
+    del.disabled = n.id === "router" || n.id === "mac";
+    del.onclick = () => {
+      config.nodes = config.nodes.filter(x => x !== n);
+      config.links = config.links.filter(([a, b]) => a !== n.id && b !== n.id);
+      changed();
+    };
+    top.append(typeWrap, pick, del);
+    const pos = document.createElement("div"); pos.className = "row3";
+    pos.append(
+      field("x", n.x, v => { n.x = clamp(num(v, n.x), 0, config.area.w); changed(); }),
+      field("y", n.y, v => { n.y = clamp(num(v, n.y), 0, config.area.d); changed(); }),
+      field(t("f.height"), n.z, v => { n.z = clamp(num(v, n.z), 0.05, config.area.h); changed(); }),
+    );
+    box.append(top, pos);
+    nodesEl.append(box);
+  }
+
+  const wallsEl = $("walls"); wallsEl.replaceChildren();
+  config.walls.forEach((w, idx) => {
+    const box = document.createElement("div"); box.className = "item";
+    const row = document.createElement("div"); row.className = "walls";
+    for (const key of ["x1", "y1", "x2", "y2"]) {
+      row.append(field(key, w[key], v => { w[key] = num(v, w[key]); changed(); }));
+    }
+    const del = document.createElement("button"); del.textContent = "✕"; del.title = t("f.delete");
+    del.onclick = () => { config.walls.splice(idx, 1); changed(); };
+    row.append(del);
+    box.append(row);
+    wallsEl.append(box);
+  });
+}
+
+for (const [id, key, min] of [["aw", "w", 1], ["ad", "d", 1], ["ah", "h", 1.5]]) {
+  $(id).onchange = () => { config.area[key] = clamp(num($(id).value, config.area[key]), min, 50); changed(); frameCamera(); };
+}
+
+$("crossing").oninput = () => {
+  config.crossing = num($("crossing").value, 0.5);
+  if (active && mode === "live") active.crossing = config.crossing;
+  $("crossingVal").textContent = t("pct", { v: Math.round(config.crossing * 100) });
+  setSaveMsg(null);
+  human.previewUntil = performance.now() + 2000;
+};
+
+$("addNode").onclick = () => {
+  let i = 1; while (config.nodes.some(n => n.id === `esp${i}`)) i++;
+  config.nodes.push({ id: `esp${i}`, name: `ESP32 ${i}`, type: "esp32", x: config.area.w / 2, y: config.area.d / 2, z: 1.0 });
+  changed();
+  startPick(`esp${i}`);
+};
+$("addWall").onclick = () => {
+  config.walls.push({ x1: config.area.w / 2, y1: 0, x2: config.area.w / 2, y2: config.area.d });
+  changed();
+};
+$("autoLinks").onclick = () => {
+  const links = [["router", "mac"]];
+  const ids = config.nodes.filter(n => n.type === "esp32" || n.id === "router").map(n => n.id);
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) links.push([ids[i], ids[j]]);
+  config.links = links;
+  changed();
+};
+
+$("save").onclick = async () => {
+  const r = await fetch("/api/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config) });
+  const j = await r.json();
+  if (r.ok) { saved = j.room; config = structuredClone(saved); changed(); setSaveMsg("saved"); }
+  else setSaveMsg("saveErr", { v: j.error || r.status });
+};
+
+// Kayıt mesajı anahtarla tutulur, dil değişince yeniden yazılır.
+let saveMsg = null;
+function setSaveMsg(key, vars) {
+  saveMsg = key ? { key, vars } : null;
+  $("saveMsg").textContent = key ? t(key, vars) : "";
+}
+$("reset").onclick = () => { config = structuredClone(saved); changed(); frameCamera(); };
+
+// haritada tıklayarak cihaz yerleştirme
+function startPick(id) {
+  if (mode !== "live") { mode = "live"; applyMode(); }
+  pickNodeId = id;
+  renderPickHint();
+  $("pickHint").style.display = "block";
+}
+function renderPickHint() {
+  if (!pickNodeId) return;
+  const n = config.nodes.find(x => x.id === pickNodeId);
+  $("pickHint").textContent = t("pick.hint", { name: n?.name ?? pickNodeId });
+}
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener("pointerdown", e => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!pickNodeId || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObject(floorMesh)[0];
+  if (!hit) return;
+  const n = config.nodes.find(x => x.id === pickNodeId);
+  if (n) {
+    n.x = Math.round((hit.point.x + A.w / 2) * 10) / 10;
+    n.y = Math.round((hit.point.z + A.d / 2) * 10) / 10;
+  }
+  pickNodeId = null;
+  $("pickHint").style.display = "none";
+  changed();
+});
+
+// ------------------------------------------------------------ başlat
+const res = await fetch("/api/room");
+saved = (await res.json()).room;
+config = structuredClone(saved);
+mountLangToggle($("lang"));
+applyI18n();
+onLangChange(() => {
+  renderForm();
+  renderModeTexts();
+  renderPickHint();
+  if (saveMsg) setSaveMsg(saveMsg.key, saveMsg.vars);
+  if (mode === "sim") applyMode();   // sanal cihaz adları dile göre yeniden oluşsun
+  else renderLinksText();
+});
+resize();
+renderForm();
+applyMode(true);
+connect();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

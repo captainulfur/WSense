@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WallSense</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16191d; --muted: #66707a; --line: #e3e6ea;
+    --signal: #2563eb; --base: #9aa3ad; --motion: #dc2626; --motion-bg: rgba(220,38,38,.12);
+    --calm: #16a34a; --mark: #d97706; --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --text: #e8ebef; --muted: #8b95a1; --line: #262c34;
+      --signal: #60a5fa; --base: #5b6570; --motion: #f87171; --motion-bg: rgba(248,113,113,.14);
+      --calm: #4ade80; --mark: #fbbf24; --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .unit { font-size: 14px; color: var(--muted); font-weight: 400; }
+  #status { display: flex; align-items: center; gap: 12px; }
+  #dot { width: 18px; height: 18px; border-radius: 50%; background: var(--base); flex: none; transition: background .15s; }
+  #status.motion #dot { background: var(--motion); box-shadow: 0 0 0 6px var(--motion-bg); }
+  #status.calm #dot { background: var(--calm); }
+  #statusText { font-size: 22px; font-weight: 700; }
+  #status.motion #statusText { color: var(--motion); }
+  .chart { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px 6px; margin-bottom: 12px; }
+  .chart-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); gap: 8px; flex-wrap: wrap; }
+  .legend span { margin-left: 12px; white-space: nowrap; }
+  .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  canvas { width: 100%; display: block; }
+  #rssiCanvas { height: 280px; }
+  #scoreCanvas { height: 130px; }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--signal); border-color: var(--signal); color: #fff; }
+  input[type=range] { width: 180px; vertical-align: middle; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .hdr-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .langtoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .langtoggle button { border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+  .langtoggle button.on { background: var(--signal); color: #fff; }
+  #banner { display: none; margin-top: 12px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--warn); color: var(--warn); }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>WallSense <span class="sub"><span data-i18n="p2.subtitle"></span> · <a href="/3d" style="color:var(--signal)" data-i18n="p2.link3d"></a></span></h1>
+    <div class="hdr-right"><span class="sub" id="info"></span><div id="lang"></div></div>
+  </header>
+
+  <div id="banner"></div>
+
+  <div class="grid">
+    <div class="card" id="status"><div id="dot"></div>
+      <div><div class="label" data-i18n="card.status"></div><div id="statusText"></div></div></div>
+    <div class="card"><div class="label" data-i18n="card.signal"></div><div class="value"><span id="rssi">–</span> <span class="unit">dBm</span></div></div>
+    <div class="card"><div class="label" data-i18n="card.baseline"></div><div class="value"><span id="base">–</span> <span class="unit">dBm</span></div></div>
+    <div class="card"><div class="label" data-i18n="card.score"></div><div class="value"><span id="score">–</span> <span class="unit">/ <span id="thr">–</span></span></div></div>
+  </div>
+
+  <div class="chart">
+    <div class="chart-head"><span data-i18n="chart.rssi"></span>
+      <span class="legend"><span><i style="background:var(--signal)"></i><span data-i18n="lg.rssi"></span></span><span><i style="background:var(--base)"></i><span data-i18n="lg.base"></span></span><span><i style="background:var(--motion-bg);height:10px"></i><span data-i18n="lg.motion"></span></span><span><i style="background:var(--mark)"></i><span data-i18n="lg.mark"></span></span></span></div>
+    <canvas id="rssiCanvas"></canvas>
+  </div>
+  <div class="chart">
+    <div class="chart-head"><span data-i18n="chart.score"></span></div>
+    <canvas id="scoreCanvas"></canvas>
+  </div>
+
+  <div class="card controls">
+    <button class="primary" id="calib" data-i18n="btn.calibrate"></button>
+    <button id="mark" data-i18n="btn.mark"></button>
+    <label><span data-i18n="lbl.threshold"></span> <input type="range" id="thrRange" min="0.5" max="8" step="0.1"> <b id="thrVal">–</b> dBm</label>
+  </div>
+  <p class="hint" data-i18n-html="p2.hint"></p>
+</main>
+
+<script type="module">
+import { t, applyI18n, mountLangToggle, onLangChange } from "/viz3d/i18n.js";
+
+const WINDOW = 60; // saniye
+let samples = [];
+let marks = [];
+let lastMsg = null;
+let thrDragging = false;
+
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function ingest(m) {
+  if (m.disconnected) { showBanner("banner.nowifi"); return; }
+  hideBanner();
+  samples.push(m);
+  if (m.mark) marks.push({ t: m.t, label: m.mark });
+  lastMsg = m;
+}
+
+function prune() {
+  const now = lastMsg ? lastMsg.t : Date.now() / 1000;
+  const cut = now - WINDOW - 2;
+  while (samples.length && samples[0].t < cut) samples.shift();
+  while (marks.length && marks[0].t < cut) marks.shift();
+}
+
+// Banner metni çeviri anahtarıyla tutulur, dil değişince güncellenir.
+let bannerKey = null;
+function showBanner(key) { bannerKey = key; const b = $("banner"); b.textContent = t(key); b.style.display = "block"; }
+function hideBanner() { bannerKey = null; $("banner").style.display = "none"; }
+
+function updateCards() {
+  const m = lastMsg;
+  if (!m) { $("statusText").textContent = t("st.waiting"); return; }
+  $("rssi").textContent = m.rssi;
+  $("base").textContent = m.baseline.toFixed(1);
+  $("score").textContent = m.score.toFixed(2);
+  $("thr").textContent = m.threshold.toFixed(1);
+  if (!thrDragging) { $("thrRange").value = m.threshold; $("thrVal").textContent = m.threshold.toFixed(1); }
+  const st = $("status");
+  st.className = "card";
+  let text;
+  if (!m.warm) text = t("st.warming");
+  else if (m.calibrating) text = t("st.calibrating");
+  else if (m.motion) { text = t("st.motion"); st.classList.add("motion"); }
+  else { text = t("st.calm"); st.classList.add("calm"); }
+  $("statusText").textContent = text;
+}
+
+function setupCanvas(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function drawChart(canvas, key, opts) {
+  const { ctx, w, h } = setupCanvas(canvas);
+  const padL = 40, padR = 8, padT = 8, padB = 20;
+  const pw = w - padL - padR, ph = h - padT - padB;
+  const now = lastMsg ? lastMsg.t : Date.now() / 1000;
+  const t0 = now - WINDOW;
+  const x = t => padL + ((t - t0) / WINDOW) * pw;
+
+  const vis = samples.filter(s => s.t >= t0);
+  let lo, hi;
+  if (opts.range) [lo, hi] = opts.range(vis);
+  else { lo = 0; hi = 1; }
+  if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
+  const y = v => padT + (1 - (v - lo) / (hi - lo)) * ph;
+
+  // ızgara + eksen
+  ctx.font = "11px -apple-system, sans-serif";
+  ctx.fillStyle = css("--muted"); ctx.strokeStyle = css("--line"); ctx.lineWidth = 1;
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = lo + (hi - lo) * i / ticks, yy = y(v);
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(opts.fmt(v), padL - 6, yy);
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let s = 0; s <= WINDOW; s += 10) ctx.fillText(s === WINDOW ? t("axis.now") : `-${WINDOW - s}s`, x(t0 + s), h - padB + 5);
+
+  // hareket alanları
+  ctx.fillStyle = css("--motion-bg");
+  for (let i = 0; i < vis.length; i++) {
+    if (!vis[i].motion) continue;
+    const xa = x(vis[i].t), xb = i + 1 < vis.length ? x(vis[i + 1].t) : x(vis[i].t) + 2;
+    ctx.fillRect(xa, padT, Math.max(1, xb - xa), ph);
+  }
+
+  // işaretler
+  ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+  for (const mk of marks) {
+    if (mk.t < t0) continue;
+    ctx.beginPath(); ctx.moveTo(x(mk.t), padT); ctx.lineTo(x(mk.t), padT + ph); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  for (const line of opts.lines) {
+    if (line.hline !== undefined) {
+      const v = typeof line.hline === "function" ? line.hline() : line.hline;
+      if (v == null) continue;
+      ctx.strokeStyle = css(line.color); ctx.lineWidth = line.width || 1.5; ctx.setLineDash(line.dash || []);
+      ctx.beginPath(); ctx.moveTo(padL, y(v)); ctx.lineTo(w - padR, y(v)); ctx.stroke(); ctx.setLineDash([]);
+      continue;
+    }
+    ctx.strokeStyle = css(line.color); ctx.lineWidth = line.width || 2; ctx.setLineDash(line.dash || []);
+    ctx.beginPath();
+    let started = false;
+    for (const s of vis) {
+      const v = s[line.key];
+      if (v == null) continue;
+      const px = x(s.t), py = y(v);
+      if (!started) { ctx.moveTo(px, py); started = true; }
+      else if (line.step) { ctx.lineTo(px, ctx._lastY ?? py); ctx.lineTo(px, py); }
+      else ctx.lineTo(px, py);
+      ctx._lastY = py;
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+}
+
+function render() {
+  prune();
+  updateCards();
+  drawChart($("rssiCanvas"), "rssi", {
+    fmt: v => v.toFixed(0),
+    range: vis => {
+      if (!vis.length) return [-60, -30];
+      const vals = vis.flatMap(s => [s.rssi, s.baseline]);
+      return [Math.floor(Math.min(...vals)) - 2, Math.ceil(Math.max(...vals)) + 2];
+    },
+    lines: [
+      { key: "baseline", color: "--base", width: 1.5, dash: [5, 4] },
+      { key: "rssi", color: "--signal", width: 2, step: true },
+    ],
+  });
+  drawChart($("scoreCanvas"), "score", {
+    fmt: v => v.toFixed(1),
+    range: vis => {
+      const thr = lastMsg ? lastMsg.threshold : 2;
+      const mx = vis.length ? Math.max(...vis.map(s => s.score)) : 0;
+      return [0, Math.max(thr * 1.5, mx * 1.1, 1)];
+    },
+    lines: [
+      { hline: () => lastMsg && lastMsg.threshold, color: "--motion", width: 1.5, dash: [6, 4] },
+      { key: "score", color: "--signal", width: 2 },
+    ],
+  });
+  requestAnimationFrame(render);
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("history", e => { samples = []; marks = []; JSON.parse(e.data).forEach(ingest); });
+  es.onmessage = e => ingest(JSON.parse(e.data));
+  es.onopen = () => hideBanner();
+  es.onerror = () => showBanner("banner.lost");
+}
+
+let info = null;
+function renderInfo() {
+  if (!info) { $("info").textContent = t("connecting"); return; }
+  const parts = [];
+  if (info.gateway) parts.push(t("info.router", { v: info.gateway }));
+  if (info.channel != null) parts.push(t("info.channel", { v: info.channel }));
+  parts.push(t("info.rate", { v: info.rate_hz.toFixed(0) }));
+  parts.push(t("info.log", { v: info.csv }));
+  $("info").textContent = parts.join(" · ");
+}
+
+async function loadInfo() {
+  try {
+    const r = await fetch("/api/info");
+    info = await r.json();
+  } catch { }
+  renderInfo();
+}
+
+$("calib").onclick = () => fetch("/api/calibrate", { method: "POST" });
+$("mark").onclick = () => fetch("/api/mark?label=" + encodeURIComponent("yürüdüm"), { method: "POST" });
+const rng = $("thrRange");
+rng.oninput = () => { thrDragging = true; $("thrVal").textContent = Number(rng.value).toFixed(1); };
+rng.onchange = async () => {
+  await fetch("/api/threshold?value=" + rng.value, { method: "POST" });
+  thrDragging = false;
+};
+
+mountLangToggle($("lang"));
+applyI18n();
+renderInfo();
+onLangChange(() => { renderInfo(); if (bannerKey) showBanner(bannerKey); });
+
+connect();
+loadInfo(); setTimeout(loadInfo, 2000);
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
