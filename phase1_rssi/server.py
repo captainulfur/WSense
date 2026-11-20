@@ -236,23 +236,29 @@ class Hub:
 # ---------------------------------------------------------------- uygulama
 
 class App:
-    def __init__(self, interval_ms: int, threshold: float, ping: bool):
+    def __init__(self, interval_ms: int, threshold: float, ping: bool,
+                 replay: Path | None = None, replay_from: float = 0.0):
         self.interval_ms = interval_ms
+        self.replay = replay
+        self.replay_from = replay_from
         self.detector = Detector(1000 / interval_ms, threshold)
         self.hub = Hub()
-        self.ping_enabled = ping
+        self.ping_enabled = ping and replay is None
         self.gateway = None
         self.procs: list[subprocess.Popen] = []
         self.pending_mark: str | None = None
         self.mark_lock = threading.Lock()
         self.info = {"channel": None, "noise": None}
 
-        DATA_DIR.mkdir(exist_ok=True)
-        self.csv_path = DATA_DIR / f"rssi-{datetime.now():%Y%m%d-%H%M%S}.csv"
-        self.csv_file = open(self.csv_path, "w", newline="")
-        self.csv = csv.writer(self.csv_file)
-        self.csv.writerow(["t", "rssi", "noise", "channel", "baseline", "score",
-                           "threshold", "motion", "mark"])
+        # Tekrar oynatırken yeni kayıt dosyası açılmaz
+        self.csv_path = self.csv_file = self.csv = None
+        if replay is None:
+            DATA_DIR.mkdir(exist_ok=True)
+            self.csv_path = DATA_DIR / f"rssi-{datetime.now():%Y%m%d-%H%M%S}.csv"
+            self.csv_file = open(self.csv_path, "w", newline="")
+            self.csv = csv.writer(self.csv_file)
+            self.csv.writerow(["t", "rssi", "noise", "channel", "baseline", "score",
+                               "threshold", "motion", "mark"])
 
     def mark(self, label: str):
         with self.mark_lock:
@@ -264,6 +270,9 @@ class App:
             return m or ""
 
     def start(self):
+        if self.replay is not None:
+            threading.Thread(target=self._replay_loop, daemon=True).start()
+            return
         if not READER.exists():
             sys.exit("rssi_reader derlenmemiş. Projeyi ./run.sh ile başlatın.")
         if self.ping_enabled:
@@ -291,6 +300,19 @@ class App:
             ["ping", "-i", "0.1", "-q", self.gateway],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
+    def _ingest(self, s: dict, recorded_mark: str = "") -> dict | None:
+        """Tek bir ölçümü algılayıcıdan geçirir ve tarayıcılara yayınlar."""
+        if s["rssi"] == 0:  # Wi-Fi bağlı değil
+            self.hub.publish({"t": s["t"], "disconnected": True})
+            return None
+        self.info = {"channel": s["ch"], "noise": s["noise"]}
+        d = self.detector.update(s["t"], s["rssi"])
+        mark = self._take_mark() or recorded_mark
+        msg = {"t": s["t"], "link": LIVE_LINK, "rssi": s["rssi"], "noise": s["noise"],
+               "ch": s["ch"], "mark": mark, **d}
+        self.hub.publish(msg)
+        return msg
+
     def _read_loop(self, proc: subprocess.Popen):
         rows = 0
         for line in proc.stdout:
@@ -298,27 +320,65 @@ class App:
                 s = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if s["rssi"] == 0:  # Wi-Fi bağlı değil
-                self.hub.publish({"t": s["t"], "disconnected": True})
+            msg = self._ingest(s)
+            if msg is None:
                 continue
-            self.info = {"channel": s["ch"], "noise": s["noise"]}
-            d = self.detector.update(s["t"], s["rssi"])
-            mark = self._take_mark()
-            msg = {"t": s["t"], "link": LIVE_LINK, "rssi": s["rssi"], "noise": s["noise"],
-                   "ch": s["ch"], "mark": mark, **d}
-            self.hub.publish(msg)
             self.csv.writerow([f"{s['t']:.3f}", s["rssi"], s["noise"], s["ch"],
-                               d["baseline"], d["score"], d["threshold"],
-                               int(d["motion"]), mark])
+                               msg["baseline"], msg["score"], msg["threshold"],
+                               int(msg["motion"]), msg["mark"]])
             rows += 1
             if rows % 20 == 0:
                 self.csv_file.flush()
         print("[hata] rssi_reader durdu", flush=True)
 
+    def _replay_loop(self):
+        """Kayıtlı bir oturumu (data/*.csv) gerçek hızında, canlıymış gibi oynatır.
+
+        Algılayıcı her şeyi yeniden hesaplar; CSV'den sadece ham ölçüm ve işaretler alınır.
+        Dosya bitince baştan başlar.
+        """
+        rows = load_replay(self.replay, self.replay_from)
+        print(f"[bilgi] tekrar oynatılıyor: {rows_label(self.replay)}, "
+              f"{len(rows)} ölçüm, {rows[-1]['t'] - rows[0]['t']:.0f} sn", flush=True)
+        while True:
+            start, t0 = time.time(), rows[0]["t"]
+            for r in rows:
+                wait = start + (r["t"] - t0) - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                self._ingest({**r, "t": start + (r["t"] - t0)}, r["mark"])
+            print("[bilgi] kayıt bitti, baştan oynatılıyor", flush=True)
+
     def stop(self):
         for p in self.procs:
             p.terminate()
-        self.csv_file.close()
+        if self.csv_file:
+            self.csv_file.close()
+
+
+def rows_label(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return path.name
+
+
+def load_replay(path: Path, start_s: float = 0.0) -> list[dict]:
+    """Kayıt CSV'sini okur. start_s: kaydın kaçıncı saniyesinden başlanacağı."""
+    rows = []
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                rows.append({"t": float(r["t"]), "rssi": int(r["rssi"]), "noise": int(r["noise"]),
+                             "ch": int(r["channel"]), "mark": r.get("mark") or ""})
+            except (KeyError, TypeError, ValueError):
+                continue
+    if rows:
+        first = rows[0]["t"]
+        rows = [r for r in rows if r["t"] - first >= start_s]
+    if len(rows) < 2:
+        sys.exit(f"{path}: oynatılacak ölçüm yok")
+    return rows
 
 
 def make_handler(app: App):
@@ -365,7 +425,9 @@ def make_handler(app: App):
             elif path == "/events":
                 self._events()
             elif path == "/api/info":
-                self._json({"gateway": app.gateway, "csv": str(app.csv_path.relative_to(ROOT)),
+                self._json({"gateway": app.gateway,
+                            "csv": str(app.csv_path.relative_to(ROOT)) if app.csv_path else None,
+                            "replay": rows_label(app.replay) if app.replay else None,
                             "rate_hz": app.detector.rate, **app.info})
             else:
                 self.send_error(404)
@@ -429,15 +491,22 @@ def main():
     ap.add_argument("--threshold", type=float, default=2.0, help="başlangıç eşiği (dBm)")
     ap.add_argument("--no-ping", action="store_true", help="router'a ping atma")
     ap.add_argument("--open", action="store_true", help="tarayıcıda aç")
+    ap.add_argument("--replay", type=Path, metavar="CSV",
+                    help="Wi-Fi yerine kayıtlı bir oturumu (data/*.csv) oynat")
+    ap.add_argument("--replay-from", type=float, default=0.0, metavar="SN",
+                    help="kaydın kaçıncı saniyesinden başlansın")
     args = ap.parse_args()
+    if args.replay and not args.replay.exists():
+        ap.error(f"dosya yok: {args.replay}")
 
-    app = App(args.interval_ms, args.threshold, not args.no_ping)
+    app = App(args.interval_ms, args.threshold, not args.no_ping, args.replay, args.replay_from)
     app.start()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(app))
     server.daemon_threads = True
     url = f"http://127.0.0.1:{args.port}"
     print(f"[bilgi] WallSense {__version__} çalışıyor: {url}", flush=True)
-    print(f"[bilgi] kayıt dosyası: {app.csv_path.relative_to(ROOT)}", flush=True)
+    if app.csv_path:
+        print(f"[bilgi] kayıt dosyası: {app.csv_path.relative_to(ROOT)}", flush=True)
     if args.open:
         subprocess.Popen(["open", url])
     try:

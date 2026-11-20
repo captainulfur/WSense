@@ -265,7 +265,7 @@ function renderInfo() {
   if (info.gateway) parts.push(t("info.router", { v: info.gateway }));
   if (info.channel != null) parts.push(t("info.channel", { v: info.channel }));
   parts.push(t("info.rate", { v: info.rate_hz.toFixed(0) }));
-  parts.push(t("info.log", { v: info.csv }));
+  parts.push(info.replay ? t("info.replay", { v: info.replay }) : t("info.log", { v: info.csv }));
   $("info").textContent = parts.join(" · ");
 }
 

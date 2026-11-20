@@ -46,6 +46,7 @@ WallSense measures that change and shows it on a live chart and on a 3D floor pl
 | Live 2D chart | Signal, calm level, motion score, threshold, calibration and manual marks. |
 | 3D floor plan | Edit room size, walls and device positions. The link glows red and a human figure appears when motion is detected. |
 | Data logging | Every session is saved as CSV in `data/` for later analysis and training. |
+| Session replay | `--replay data/....csv` plays a recorded session through the same detector, in real time. Works without a Mac or Wi-Fi. |
 | Simulation mode | 6 virtual ESP32s and a virtual person, to show how multi-link tracking will work. |
 | Turkish and English UI | TR / EN toggle on both pages. |
 
@@ -58,7 +59,7 @@ WallSense measures that change and shows it on a live chart and on a 3D floor pl
 | **Real multi-device tracking** | The 3D tracking with 6 devices is a **simulation**. Its accuracy (~0.3–0.6 m) is measured under ideal, noise-free assumptions and real-world results will be worse. |
 | **Motion away from the link** | Only motion near the straight line between the router and the Mac is detected. |
 | **Pose / skeleton / images** | WallSense does not and cannot produce camera-like images or body poses from a single link. |
-| **Other operating systems** | macOS only (uses Apple's CoreWLAN). |
+| **Other operating systems** | Live measurement is macOS only (uses Apple's CoreWLAN). Replaying a recorded session (`--replay`) works anywhere Python runs. |
 | **Counting people, identifying people** | Not supported. |
 
 ---
@@ -151,6 +152,8 @@ Press `Ctrl+C` in the terminal to stop.
 | `--port` | `8765` | Port for the local web page |
 | `--interval-ms` | `100` | Time between measurements |
 | `--open` | off | Open the page in your browser |
+| `--replay` | – | Play a recorded session (`data/*.csv`) instead of live Wi-Fi. No compile step, no ping, no new log file. Loops at the end. |
+| `--replay-from` | `0` | Start the replay this many seconds into the recording |
 
 ---
 
@@ -185,7 +188,7 @@ Please read these before drawing conclusions from what you see.
   If the Mac is right next to the router, almost nothing will be detected.
 - **Environment changes cause false alarms.** Doors, fans, pets, microwave ovens and other Wi-Fi traffic can all move the signal.
 - **Thick concrete and metal** block most of the signal.
-- **macOS only.** It depends on Apple's CoreWLAN framework.
+- **macOS only** for live measurement. It depends on Apple's CoreWLAN framework. `--replay` runs anywhere.
 - **Limited testing.** Developed and tested in one home: macOS 26, 5 GHz Wi-Fi, ~10 samples per second, ±1 dBm noise when calm.
   Your results may differ. Please report them.
 - **The simulation is optimistic.** It assumes a clean signal model. Real ESP32 data will be noisier.

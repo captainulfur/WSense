@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `--replay <csv>` and `--replay-from <seconds>`: play a recorded session from `data/` through the same detector in real time, instead of live Wi-Fi. No compile step, no ping, no new log file; loops at the end. Recorded marks are shown on the chart.
+- `run.sh` skips compiling the Swift reader when `--replay` is given, so replay works on any OS with Python 3.10+.
+
 ## 0.1.0 (2026-11-19): first public prototype
 
 Early prototype. Works with a single signal link (router ↔ Mac) and cannot locate a person yet.

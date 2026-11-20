@@ -46,6 +46,7 @@ WallSense bu değişimi ölçer, canlı bir grafikte ve evinizin 3D planında g�
 | Canlı 2D grafik | Sinyal, sakin seviye, hareket skoru, eşik, kalibrasyon ve elle işaretleme. |
 | 3D ev planı | Oda ölçüleri, duvarlar ve cihaz konumları düzenlenir. Hareket olunca hat kırmızılaşır ve bir insan figürü belirir. |
 | Veri kaydı | Her oturum `data/` klasörüne CSV olarak kaydedilir (analiz ve eğitim için). |
+| Kayıt tekrar oynatma | `--replay data/....csv` kayıtlı bir oturumu aynı algılayıcıdan, gerçek hızında geçirir. Mac ve Wi-Fi gerekmez. |
 | Simülasyon modu | 6 sanal ESP32 ve sanal bir kişi ile çok hatlı takibin nasıl çalışacağını gösterir. |
 | Türkçe ve İngilizce arayüz | İki sayfada da TR / EN düğmesi. |
 
@@ -58,7 +59,7 @@ WallSense bu değişimi ölçer, canlı bir grafikte ve evinizin 3D planında g�
 | **Gerçek çok cihazlı takip** | 6 cihazlı 3D takip bir **simülasyondur**. Doğruluğu (~0,3–0,6 m) ideal, gürültüsüz varsayımlarla ölçüldü. Gerçek sonuçlar daha kötü olacaktır. |
 | **Hattan uzaktaki hareket** | Sadece router ile Mac arasındaki düz çizgiye yakın hareketler algılanır. |
 | **Poz / iskelet / görüntü** | WallSense tek hattan kamera benzeri görüntü ya da vücut pozu üretmez, üretemez. |
-| **Diğer işletim sistemleri** | Sadece macOS (Apple'ın CoreWLAN çerçevesini kullanır). |
+| **Diğer işletim sistemleri** | Canlı ölçüm sadece macOS'ta (Apple'ın CoreWLAN çerçevesini kullanır). Kayıtlı oturumu oynatmak (`--replay`) Python'un çalıştığı her yerde olur. |
 | **Kişi sayma, kişi tanıma** | Desteklenmiyor. |
 
 ---
@@ -151,6 +152,8 @@ Durdurmak için terminalde `Ctrl+C`.
 | `--port` | `8765` | Yerel web sayfasının portu |
 | `--interval-ms` | `100` | İki ölçüm arasındaki süre |
 | `--open` | kapalı | Sayfayı tarayıcıda aç |
+| `--replay` | – | Canlı Wi-Fi yerine kayıtlı bir oturumu (`data/*.csv`) oynat. Derleme, ping ve yeni kayıt dosyası yok. Bitince baştan başlar. |
+| `--replay-from` | `0` | Oynatmaya kaydın kaçıncı saniyesinden başlansın |
 
 ---
 
@@ -185,7 +188,7 @@ Gördüklerinizden sonuç çıkarmadan önce lütfen okuyun.
   Mac router'ın hemen yanındaysa neredeyse hiçbir şey algılanmaz.
 - **Ortam değişiklikleri yanlış alarm verir.** Kapılar, vantilatörler, evcil hayvanlar, mikrodalga fırınlar ve diğer Wi-Fi trafiği sinyali oynatabilir.
 - **Kalın beton ve metal** sinyalin çoğunu keser.
-- **Sadece macOS.** Apple'ın CoreWLAN çerçevesine bağlıdır.
+- **Canlı ölçüm sadece macOS'ta.** Apple'ın CoreWLAN çerçevesine bağlıdır. `--replay` her yerde çalışır.
 - **Sınırlı test.** Tek bir evde geliştirildi ve test edildi: macOS 26, 5 GHz Wi-Fi, saniyede ~10 ölçüm, sakinken ±1 dBm gürültü.
   Sizin sonuçlarınız farklı olabilir, lütfen paylaşın.
 - **Simülasyon iyimserdir.** Temiz bir sinyal modeli varsayar. Gerçek ESP32 verisi daha gürültülü olacaktır.

@@ -43,6 +43,7 @@ export const DICT = {
     "info.channel": "kanal {v}",
     "info.rate": "{v} ölçüm/sn",
     "info.log": "kayıt: {v}",
+    "info.replay": "tekrar oynatılıyor: {v}",
 
     // 3D sayfa
     "p3.help": "Fareyle döndür, tekerlekle yakınlaştır.",
@@ -124,6 +125,7 @@ export const DICT = {
     "info.channel": "channel {v}",
     "info.rate": "{v} samples/s",
     "info.log": "log: {v}",
+    "info.replay": "replaying: {v}",
 
     "p3.help": "Drag to rotate, scroll to zoom.",
     "p3.back2d": "Back to 2D chart",
