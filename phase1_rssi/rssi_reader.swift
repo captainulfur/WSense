@@ -1,6 +1,7 @@
 // WallSense - Aşama 1
-// Mac'in Wi-Fi kartından sinyal gücünü (RSSI) okur ve her ölçümü
+// macOS: client'ın Wi-Fi kartından sinyal gücünü (RSSI) okur ve her ölçümü
 // bir satır JSON olarak stdout'a yazar. server.py bu çıktıyı okur.
+// Linux ve Windows için aynı işi rssi_reader.py yapar.
 //
 // Kullanım: rssi_reader [aralık_ms]   (varsayılan 100 ms = saniyede 10 ölçüm)
 

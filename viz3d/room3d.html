@@ -8,14 +8,14 @@
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #16191d; --muted: #66707a; --line: #e3e6ea;
     --scene: #e9edf2; --floor: #d5dbe2; --grid: #8a96a3; --wall: #9aa6b4;
-    --router: #2563eb; --mac: #7c3aed; --esp32: #0d9488; --link: #64748b; --hot: #dc2626;
+    --router: #2563eb; --client: #7c3aed; --esp32: #0d9488; --link: #64748b; --hot: #dc2626;
     --person: #ea580c; --accent: #2563eb; --ok: #16a34a; --warn: #b45309;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1216; --panel: #171b21; --text: #e8ebef; --muted: #8b95a1; --line: #262c34;
       --scene: #0d1014; --floor: #1b2128; --grid: #3d4752; --wall: #56616e;
-      --router: #60a5fa; --mac: #a78bfa; --esp32: #2dd4bf; --link: #7b8794; --hot: #f87171;
+      --router: #60a5fa; --client: #a78bfa; --esp32: #2dd4bf; --link: #7b8794; --hot: #f87171;
       --person: #fb923c; --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24;
     }
   }
@@ -113,7 +113,7 @@
     <p class="note" data-i18n="note.links"></p>
 
     <h2 data-i18n="sec.figure"></h2>
-    <label class="sub" for="crossing"><span data-i18n="figure.q"></span> Router ← <b id="crossingVal"></b> → Mac</label>
+    <label class="sub" for="crossing"><span data-i18n="figure.q"></span> Router ← <b id="crossingVal"></b> → Client</label>
     <input type="range" id="crossing" min="0" max="1" step="0.05" style="padding:0">
     <p class="note" data-i18n="note.figure"></p>
 
@@ -144,7 +144,7 @@ let active = null;     // sahnede gösterilen (canlı: config, simülasyon: sana
 let rti = null, disp = null;
 let pickNodeId = null;
 const live = new Map(); // linkId -> {v, at, score, threshold, motion, state}
-const LIVE_LINK = "router-mac";  // Mac'in ölçtüğü tek hat
+const LIVE_LINK = "router-client";  // client'ın ölçtüğü tek hat
 const human = { prev: null, vx: 0, vy: 0, previewUntil: 0 };
 
 // ------------------------------------------------------------ three.js
@@ -568,17 +568,17 @@ function renderForm() {
     const typeWrap = document.createElement("div");
     const tl = document.createElement("label"); tl.textContent = t("f.type");
     const sel = document.createElement("select");
-    for (const [val, txt] of [["router", "Router"], ["mac", "Mac"], ["esp32", "ESP32"]]) {
+    for (const [val, txt] of [["router", "Router"], ["client", "Client"], ["esp32", "ESP32"]]) {
       const o = document.createElement("option"); o.value = val; o.textContent = txt; sel.append(o);
     }
     sel.value = n.type;
-    sel.disabled = n.id === "router" || n.id === "mac";
+    sel.disabled = n.id === "router" || n.id === "client";
     sel.onchange = () => { n.type = sel.value; changed(); };
     typeWrap.append(tl, sel);
     const pick = document.createElement("button"); pick.textContent = "📍"; pick.title = t("f.pick");
     pick.onclick = () => startPick(n.id);
     const del = document.createElement("button"); del.textContent = "✕"; del.title = t("f.delete");
-    del.disabled = n.id === "router" || n.id === "mac";
+    del.disabled = n.id === "router" || n.id === "client";
     del.onclick = () => {
       config.nodes = config.nodes.filter(x => x !== n);
       config.links = config.links.filter(([a, b]) => a !== n.id && b !== n.id);
@@ -633,7 +633,7 @@ $("addWall").onclick = () => {
   changed();
 };
 $("autoLinks").onclick = () => {
-  const links = [["router", "mac"]];
+  const links = [["router", "client"]];
   const ids = config.nodes.filter(n => n.type === "esp32" || n.id === "router").map(n => n.id);
   for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) links.push([ids[i], ids[j]]);
   config.links = links;

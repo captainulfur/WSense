@@ -7,12 +7,14 @@
 Wi-Fi signals pass through walls. When someone steps into the path of a signal, their body absorbs and reflects part of it.
 WallSense measures that change and shows it on a live chart and on a 3D floor plan of your home.
 
-![2D live chart: two people crossing the Router–Mac link, shown as red motion areas](docs/images/chart-2d.jpg)
+![2D live chart: two people crossing the Router–Client link, shown as red motion areas](docs/images/chart-2d.jpg)
 
 > [!WARNING]
-> **Version 0.1.0: early prototype.** This is not a finished product.
-> Right now WallSense works with **a single signal link** (your router ↔ your Mac) and **cannot tell where a person is**,
-> only that something is moving on that link. ESP32 hardware support is **not implemented yet**.
+> **Version 0.2.0: early prototype.** This is not a finished product.
+> Right now WallSense works with **a single signal link** (your router ↔ a client, the Wi-Fi computer running WallSense)
+> and **cannot tell where a person is**, only that something is moving on that link.
+> The client can run macOS, Linux or Windows; the Linux and Windows readers are new and **experimental**.
+> ESP32 hardware support is **not implemented yet**.
 > The multi-device 3D tracking you see in the screenshots is a **simulation**, not real data.
 > Please read [What works and what doesn't](#what-works-and-what-doesnt) before using it.
 
@@ -40,13 +42,13 @@ WallSense measures that change and shows it on a live chart and on a 3D floor pl
 
 | Feature | Notes |
 |---|---|
-| Motion detection on the Router–Mac link | Uses the Mac's built-in Wi-Fi signal strength (RSSI). No extra hardware. |
+| Motion detection on the Router–Client link | Uses the client's own Wi-Fi signal strength (RSSI). The client is the computer running WallSense: macOS, Linux or Windows. No extra hardware. |
 | Telling walking from standing | A walking person makes the signal fluctuate; a standing person causes a steady drop. |
 | Detecting a person who stands still | The "calm level" is frozen while motion is present, so a still person keeps being detected (up to 60 s). |
 | Live 2D chart | Signal, calm level, motion score, threshold, calibration and manual marks. |
 | 3D floor plan | Edit room size, walls and device positions. The link glows red and a human figure appears when motion is detected. |
 | Data logging | Every session is saved as CSV in `data/` for later analysis and training. |
-| Session replay | `--replay data/....csv` plays a recorded session through the same detector, in real time. Works without a Mac or Wi-Fi. |
+| Session replay | `--replay data/....csv` plays a recorded session through the same detector, in real time. Works without Wi-Fi. |
 | Simulation mode | 6 virtual ESP32s and a virtual person, to show how multi-link tracking will work. |
 | Turkish and English UI | TR / EN toggle on both pages. |
 
@@ -54,12 +56,12 @@ WallSense measures that change and shows it on a live chart and on a 3D floor pl
 
 | Missing | Why |
 |---|---|
-| **Finding where a person is** | A single link gives one number. Someone crossing near the router and someone crossing near the Mac look the same. Position needs at least 3 links (see [How it works](#how-it-works)). The human figure's spot on the link is **illustrative**: you choose it with a slider. |
-| **ESP32 / CSI support** | Planned for the next version. Today the only data source is the Mac's RSSI. |
+| **Finding where a person is** | A single link gives one number. Someone crossing near the router and someone crossing near the client look the same. Position needs at least 3 links (see [How it works](#how-it-works)). The human figure's spot on the link is **illustrative**: you choose it with a slider. |
+| **ESP32 / CSI support** | Planned for the next version. Today the only data source is the client's RSSI. |
 | **Real multi-device tracking** | The 3D tracking with 6 devices is a **simulation**. Its accuracy (~0.3–0.6 m) is measured under ideal, noise-free assumptions and real-world results will be worse. |
-| **Motion away from the link** | Only motion near the straight line between the router and the Mac is detected. |
+| **Motion away from the link** | Only motion near the straight line between the router and the client is detected. |
 | **Pose / skeleton / images** | WallSense does not and cannot produce camera-like images or body poses from a single link. |
-| **Other operating systems** | Live measurement is macOS only (uses Apple's CoreWLAN). Replaying a recorded session (`--replay`) works anywhere Python runs. |
+| **Phones and tablets** | Not supported. The client is a computer that runs Python (macOS, Linux or Windows). |
 | **Counting people, identifying people** | Not supported. |
 
 ---
@@ -68,12 +70,12 @@ WallSense measures that change and shows it on a live chart and on a 3D floor pl
 
 ### 1. Physics
 
-Your router and your Mac are constantly talking over radio waves (2.4 / 5 GHz). Those waves pass through drywall, brick and wood.
+Your router and the client (the computer running WallSense) are constantly talking over radio waves (2.4 / 5 GHz). Those waves pass through drywall, brick and wood.
 The human body is mostly water, so it absorbs and reflects these frequencies. When someone moves between the two devices,
-the signal that reaches the Mac changes.
+the signal that reaches the client changes.
 
 ```
-[Router] ~~~~~~~~~ wall ~~~~~~~~~ [Mac]
+[Router] ~~~~~~~~~ wall ~~~~~~~~~ [Client]
                ↑
      someone crossing here
      weakens / disturbs the signal
@@ -81,8 +83,16 @@ the signal that reaches the Mac changes.
 
 ### 2. Measuring
 
-- `rssi_reader.swift` reads the Mac's received signal strength (RSSI, in dBm) about **10 times per second** via CoreWLAN.
-- The server pings the router 10 times per second in the background. macOS updates RSSI much more often when there is traffic.
+- A small reader measures the client's received signal strength (RSSI, in dBm) about **10 times per second**
+  and prints one JSON line per measurement. `server.py` does not care which reader is running:
+
+  | System | Reader | Source |
+  |---|---|---|
+  | macOS | `rssi_reader.swift` | Apple's CoreWLAN |
+  | Linux | `rssi_reader.py` | `/proc/net/wireless`, or `iw` if that file is empty |
+  | Windows | `rssi_reader.py` | Native Wi-Fi API (`wlanapi.dll`) |
+
+- The server pings the router in the background. Wi-Fi drivers update RSSI much more often when there is traffic.
 
 ### 3. Detecting motion
 
@@ -122,25 +132,33 @@ With a single link there is nothing to intersect, which is why the current versi
 
 ## Quick start
 
-**Requirements:** macOS, Xcode command line tools (`swiftc`), Python 3.10+, a Wi-Fi connection.
+**Requirements:** Python 3.10+ and a Wi-Fi connection. On macOS also the Xcode command line tools (`swiftc`).
 No Python packages needed. The 3D page loads three.js from a CDN, so it needs internet access.
 
 ```bash
 git clone https://github.com/captainulfur/WSense.git
 ```
 
+macOS and Linux:
+
 ```bash
 cd WSense && ./run.sh --open
 ```
 
-On the first run it compiles the Swift reader, then opens the live chart at `http://127.0.0.1:8765`.
+Windows (Command Prompt or PowerShell):
+
+```bash
+cd WSense && python phase1_rssi\server.py --open
+```
+
+On macOS the first run compiles the Swift reader. Then the live chart opens at `http://127.0.0.1:8765`.
 Press `Ctrl+C` in the terminal to stop.
 
 **First test:**
 
-1. Put the router outside the room and the Mac inside it, so the line between them passes through the wall.
+1. Put the router outside the room and the client inside it, so the line between them passes through the wall.
 2. While nobody is moving, press **Calibrate while still** (10 s).
-3. Have someone walk between the router and the Mac. Press **I just walked** as they pass.
+3. Have someone walk between the router and the client. Press **I just walked** as they pass.
 4. If the orange mark lines line up with the red "motion" areas, it is working.
 
 **Options:**
@@ -161,11 +179,11 @@ Press `Ctrl+C` in the terminal to stop.
 
 While the server is running, open `http://127.0.0.1:8765/3d` (or click "3D view" on the 2D page).
 
-**Live data** shows your real Router–Mac link. When motion is detected the link turns red, an orange trail appears on the floor
+**Live data** shows your real Router–Client link. When motion is detected the link turns red, an orange trail appears on the floor
 along the link, and a human figure appears on it. The figure walks or stands depending on what the signal says.
 Its position along the link is set with the slider in the side panel (for example where the door is), **not measured**.
 
-![3D view, live mode: the Router–Mac link with the human figure (preview)](docs/images/view-3d-live.jpg)
+![3D view, live mode: the Router–Client link with the human figure (preview)](docs/images/view-3d-live.jpg)
 
 **Simulation** shows how tracking will look with 6 ESP32s. The green wireframe is the virtual person's true position,
 the orange figure is where the algorithm thinks they are. **This is not real data.**
@@ -182,14 +200,15 @@ Use the right panel to set the room size, walls and device positions (click 📍
 Please read these before drawing conclusions from what you see.
 
 - **One link, no position.** See [What doesn't work](#-does-not-work-yet).
-- **RSSI is coarse.** macOS reports whole dBm values that naturally fluctuate by ±1 dBm. A person crossing usually causes a drop
+- **RSSI is coarse.** Wi-Fi cards report whole dBm values that naturally fluctuate by ±1 dBm. A person crossing usually causes a drop
   of 3–8 dBm. Small or slow movements, or movement far from the link, can be missed.
-- **Placement matters a lot.** It works best when the router and the Mac are a few meters apart with the area you care about between them.
-  If the Mac is right next to the router, almost nothing will be detected.
+- **Placement matters a lot.** It works best when the router and the client are a few meters apart with the area you care about between them.
+  If the client is right next to the router, almost nothing will be detected.
 - **Environment changes cause false alarms.** Doors, fans, pets, microwave ovens and other Wi-Fi traffic can all move the signal.
 - **Thick concrete and metal** block most of the signal.
-- **macOS only** for live measurement. It depends on Apple's CoreWLAN framework. `--replay` runs anywhere.
-- **Limited testing.** Developed and tested in one home: macOS 26, 5 GHz Wi-Fi, ~10 samples per second, ±1 dBm noise when calm.
+- **The Linux and Windows readers are experimental.** They are new in 0.2 and have not been tested in a real home yet.
+  Windows' `ping` sends one packet per second, so its RSSI may update less often. Please report what you see.
+- **Limited testing.** Developed and tested in one home with the macOS reader: 5 GHz Wi-Fi, ~10 samples per second, ±1 dBm noise when calm.
   Your results may differ. Please report them.
 - **The simulation is optimistic.** It assumes a clean signal model. Real ESP32 data will be noisier.
 
@@ -199,11 +218,12 @@ Please read these before drawing conclusions from what you see.
 
 | Version | Goal | Status |
 |---|---|---|
-| **0.1** | Mac RSSI, single link, 2D chart, 3D view, simulation, TR/EN | ✅ This release |
-| **0.2** | ESP32-S3 CSI support (50+ subcarriers, ~100 samples/s) feeding the same charts | 🔜 Next |
-| **0.3** | Two ESP32s on either side of the Router–Mac link: first real position measurement along the link | Planned |
-| **0.4** | Recording labelled data ("empty", "walking", "sitting") and training a simple classifier | Planned |
-| **0.5+** | ESP32 network (4–6 devices): real version of the 3D simulation | Planned |
+| **0.1** | RSSI on a single link, 2D chart, 3D view, simulation, TR/EN | ✅ Done |
+| **0.2** | Any client: Linux and Windows readers next to macOS, session replay | ✅ This release |
+| **0.3** | ESP32-S3 CSI support (50+ subcarriers, ~100 samples/s) feeding the same charts | 🔜 Next |
+| **0.4** | Two ESP32s on either side of the Router–Client link: first real position measurement along the link | Planned |
+| **0.5** | Recording labelled data ("empty", "walking", "sitting") and training a simple classifier | Planned |
+| **0.6+** | ESP32 network (4–6 devices): real version of the 3D simulation | Planned |
 
 ---
 
@@ -220,8 +240,9 @@ Please read these before drawing conclusions from what you see.
 
 | File | Purpose |
 |---|---|
-| `run.sh` | Compiles the reader (if needed) and starts the server |
-| `phase1_rssi/rssi_reader.swift` | Reads RSSI via CoreWLAN, prints one JSON line per measurement |
+| `run.sh` | Compiles the macOS reader (if needed) and starts the server |
+| `phase1_rssi/rssi_reader.swift` | macOS: reads RSSI via CoreWLAN, prints one JSON line per measurement |
+| `phase1_rssi/rssi_reader.py` | Linux and Windows: the same job, same JSON lines |
 | `phase1_rssi/server.py` | Motion detection, CSV logging, live stream (Server-Sent Events), room settings API |
 | `phase1_rssi/index.html` | 2D live chart |
 | `viz3d/room3d.html` | 3D view (three.js) |
@@ -251,7 +272,7 @@ Please open an issue before large changes.
 ## Related work
 
 - **Radio tomographic imaging:** J. Wilson and N. Patwari, *Radio Tomographic Imaging with Wireless Networks*, IEEE Transactions on Mobile Computing, 2010. The method behind `viz3d/rti.js`.
-- **Espressif `esp-csi`:** official tools for reading CSI on ESP32 boards, planned as the base for version 0.2.
+- **Espressif `esp-csi`:** official tools for reading CSI on ESP32 boards, planned as the base for version 0.3.
 - **[RuView](https://github.com/ruvnet/RuView):** a larger Wi-Fi sensing project with ESP32 CSI firmware. Its own documentation notes that
   pose estimation from a single ESP32 is still experimental; presence and motion detection are the realistic parts.
   WallSense was started after reviewing it, with the goal of a small, honest, easy-to-read starting point.

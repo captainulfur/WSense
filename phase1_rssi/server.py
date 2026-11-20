@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""WallSense - Aşama 1: Mac Wi-Fi sinyal gücü (RSSI) ile hareket algılama.
+"""WallSense - Aşama 1: Wi-Fi sinyal gücü (RSSI) ile hareket algılama.
 
-rssi_reader'ı çalıştırır, gelen ölçümlerden hareket skoru hesaplar,
+Client (Wi-Fi'a bağlı bu bilgisayar) ile router arasındaki sinyali ölçer.
+İşletim sistemine uygun okuyucuyu çalıştırır, gelen ölçümlerden hareket skoru hesaplar,
 her şeyi data/ klasörüne CSV olarak kaydeder ve tarayıcıya canlı yayınlar.
 
 Sadece standart Python kütüphanesi kullanır.
@@ -17,32 +18,34 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-READER = HERE / "build" / "rssi_reader"
+SWIFT_READER = HERE / "build" / "rssi_reader"  # macOS: rssi_reader.swift'tan derlenir
+PY_READER = HERE / "rssi_reader.py"              # Linux ve Windows
 DATA_DIR = ROOT / "data"
 VIZ_DIR = ROOT / "viz3d"
 ROOM_PATH = ROOT / "config" / "room.json"
 
-# Mac'in ölçtüğü tek hattın adı. 3D sayfadaki "router" ve "mac" cihazlarına karşılık gelir.
-LIVE_LINK = "router-mac"
+# Client'ın ölçtüğü tek hattın adı. 3D sayfadaki "router" ve "client" cihazlarına karşılık gelir.
+LIVE_LINK = "router-client"
 
 DEFAULT_ROOM = {
     "area": {"w": 8.0, "d": 5.0, "h": 2.7},
     "walls": [{"x1": 4.0, "y1": 0.0, "x2": 4.0, "y2": 3.8}],
     "nodes": [
         {"id": "router", "name": "Router", "type": "router", "x": 1.5, "y": 2.5, "z": 1.0},
-        {"id": "mac", "name": "Mac", "type": "mac", "x": 6.5, "y": 2.5, "z": 0.8},
+        {"id": "client", "name": "Client", "type": "client", "x": 6.5, "y": 2.5, "z": 0.8},
     ],
-    "links": [["router", "mac"]],
+    "links": [["router", "client"]],
     "crossing": 0.5,
 }
 
@@ -65,34 +68,34 @@ def validate_room(obj: dict) -> dict:
         nid = str(n["id"])
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,24}", nid) or nid in ids:
             raise ValueError(f"geçersiz cihaz kimliği: {nid!r}")
-        if n["type"] not in ("router", "mac", "esp32"):
+        if n["type"] not in ("router", "client", "esp32"):
             raise ValueError(f"geçersiz cihaz türü: {n['type']!r}")
         ids.add(nid)
         nodes.append({"id": nid, "name": str(n.get("name") or nid)[:24], "type": n["type"],
                       "x": _num(n["x"], 0, area["w"]), "y": _num(n["y"], 0, area["d"]),
                       "z": _num(n["z"], 0, area["h"])})
-    if not {"router", "mac"} <= ids:
-        raise ValueError("router ve mac cihazları silinemez")
+    if not {"router", "client"} <= ids:
+        raise ValueError("router ve client cihazları silinemez")
     walls = [{k: _num(w[k], -1, 51) for k in ("x1", "y1", "x2", "y2")} for w in obj.get("walls", [])[:32]]
     links = []
     for pair in obj.get("links", [])[:256]:
         a_id, b_id = str(pair[0]), str(pair[1])
         if a_id in ids and b_id in ids and a_id != b_id:
             links.append([a_id, b_id])
-    crossing = _num(obj.get("crossing", 0.5), 0, 1)  # tek hatta insan figürünün yeri (0=router, 1=mac)
+    crossing = _num(obj.get("crossing", 0.5), 0, 1)  # tek hatta insan figürünün yeri (0=router, 1=client)
     return {"area": area, "walls": walls, "nodes": nodes, "links": links, "crossing": crossing}
 
 
 def load_room() -> dict:
     try:
-        return validate_room(json.loads(ROOM_PATH.read_text()))
+        return validate_room(json.loads(ROOM_PATH.read_text(encoding="utf-8")))
     except (OSError, ValueError, KeyError, TypeError, IndexError):
         return json.loads(json.dumps(DEFAULT_ROOM))
 
 
 def save_room(room: dict):
     ROOM_PATH.parent.mkdir(exist_ok=True)
-    ROOM_PATH.write_text(json.dumps(room, ensure_ascii=False, indent=2))
+    ROOM_PATH.write_text(json.dumps(room, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ---------------------------------------------------------------- algılayıcı
@@ -235,6 +238,32 @@ class Hub:
 
 # ---------------------------------------------------------------- uygulama
 
+def reader_command(interval_ms: int) -> list[str]:
+    """Client'ın işletim sistemine uygun okuyucuyu seçer. Hepsi aynı JSON satırlarını yazar."""
+    if sys.platform == "darwin":
+        if not SWIFT_READER.exists():
+            sys.exit("rssi_reader derlenmemiş. Projeyi ./run.sh ile başlatın.")
+        return [str(SWIFT_READER), str(interval_ms)]
+    return [sys.executable, str(PY_READER), str(interval_ms)]
+
+
+def find_gateway() -> str | None:
+    """Router'ın (varsayılan ağ geçidi) adresini bulur."""
+    if sys.platform == "darwin":
+        cmd, pattern = ["route", "-n", "get", "default"], r"gateway:\s*(\S+)"
+    elif sys.platform == "win32":
+        cmd, pattern = ["route", "-4", "print", "0.0.0.0"], r"^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+([\d.]+)"
+    else:
+        cmd, pattern = ["ip", "route", "show", "default"], r"default via (\S+)"
+    try:
+        # errors="replace": Türkçe Windows'ta komut çıktısı farklı bir kod sayfasıyla gelebilir
+        out = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(pattern, out, re.M)
+    return m.group(1) if m else None
+
+
 class App:
     def __init__(self, interval_ms: int, threshold: float, ping: bool,
                  replay: Path | None = None, replay_from: float = 0.0):
@@ -255,7 +284,7 @@ class App:
         if replay is None:
             DATA_DIR.mkdir(exist_ok=True)
             self.csv_path = DATA_DIR / f"rssi-{datetime.now():%Y%m%d-%H%M%S}.csv"
-            self.csv_file = open(self.csv_path, "w", newline="")
+            self.csv_file = open(self.csv_path, "w", newline="", encoding="utf-8")
             self.csv = csv.writer(self.csv_file)
             self.csv.writerow(["t", "rssi", "noise", "channel", "baseline", "score",
                                "threshold", "motion", "mark"])
@@ -273,32 +302,26 @@ class App:
         if self.replay is not None:
             threading.Thread(target=self._replay_loop, daemon=True).start()
             return
-        if not READER.exists():
-            sys.exit("rssi_reader derlenmemiş. Projeyi ./run.sh ile başlatın.")
+        cmd = reader_command(self.interval_ms)
         if self.ping_enabled:
             self._start_ping()
-        reader = subprocess.Popen([str(READER), str(self.interval_ms)],
-                                  stdout=subprocess.PIPE, text=True, bufsize=1)
+        reader = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
         self.procs.append(reader)
         threading.Thread(target=self._read_loop, args=(reader,), daemon=True).start()
 
     def _start_ping(self):
-        """Router'a sürekli küçük ping atar. Trafik olunca Mac RSSI'ı daha sık günceller."""
-        try:
-            out = subprocess.run(["route", "-n", "get", "default"],
-                                 capture_output=True, text=True, timeout=5).stdout
-            for line in out.splitlines():
-                if "gateway:" in line:
-                    self.gateway = line.split(":", 1)[1].strip()
-        except Exception:
-            pass
+        """Router'a sürekli küçük ping atar. Trafik olunca Wi-Fi kartı RSSI'ı daha sık günceller."""
+        self.gateway = find_gateway()
         if not self.gateway:
             print("[uyarı] router adresi bulunamadı, ping kapalı", flush=True)
             return
-        print(f"[bilgi] router {self.gateway} adresine saniyede 10 ping atılıyor", flush=True)
-        self.procs.append(subprocess.Popen(
-            ["ping", "-i", "0.1", "-q", self.gateway],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        if sys.platform == "win32":
+            cmd = ["ping", "-t", self.gateway]  # Windows'un ping'i saniyede bir atar
+        else:
+            # Linux'ta yetkisiz kullanıcı için en kısa aralık 0.2 sn
+            cmd = ["ping", "-q", "-i", "0.1" if sys.platform == "darwin" else "0.2", self.gateway]
+        print(f"[bilgi] router {self.gateway} adresine sürekli ping atılıyor", flush=True)
+        self.procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     def _ingest(self, s: dict, recorded_mark: str = "") -> dict | None:
         """Tek bir ölçümü algılayıcıdan geçirir ve tarayıcılara yayınlar."""
@@ -329,7 +352,7 @@ class App:
             rows += 1
             if rows % 20 == 0:
                 self.csv_file.flush()
-        print("[hata] rssi_reader durdu", flush=True)
+        print("[hata] sinyal okuyucu durdu", flush=True)
 
     def _replay_loop(self):
         """Kayıtlı bir oturumu (data/*.csv) gerçek hızında, canlıymış gibi oynatır.
@@ -366,7 +389,7 @@ def rows_label(path: Path) -> str:
 def load_replay(path: Path, start_s: float = 0.0) -> list[dict]:
     """Kayıt CSV'sini okur. start_s: kaydın kaçıncı saniyesinden başlanacağı."""
     rows = []
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
                 rows.append({"t": float(r["t"]), "rssi": int(r["rssi"]), "noise": int(r["noise"]),
@@ -508,7 +531,7 @@ def main():
     if app.csv_path:
         print(f"[bilgi] kayıt dosyası: {app.csv_path.relative_to(ROOT)}", flush=True)
     if args.open:
-        subprocess.Popen(["open", url])
+        webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
